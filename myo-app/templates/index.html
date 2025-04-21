@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Myo Control Panel</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+    <style>
+      #imu-canvas {
+        width: 300px;
+        height: 300px;
+        background: #f8f9fa;
+      }
+    </style>
+
+  </head>
+  
+  <body class="bg-light">
+    <div class="container py-4">
+      <h1 class="mb-4">Myo Control Panel</h1>
+
+      <div class="mb-3">
+        <span class="badge bg-secondary" id="status-badge">Disconnected</span>
+        <span class="badge bg-info ms-2 d-none" id="battery-badge">--%</span>
+      </div>
+
+      <div class="d-flex gap-2 mb-4 flex-wrap">
+        <button class="btn btn-primary" id="scan-btn">Scan</button>
+        <button class="btn btn-primary" id="connect-btn" disabled>Connect</button>
+        <button class="btn btn-primary" id="disconnect-btn" disabled>Disconnect</button>
+        <button class="btn btn-primary" id="reset-btn" disabled>Turn Off</button>
+        <button class="btn btn-primary" id="vibrate-btn" disabled>Vibrate</button>
+
+        <button class="btn btn-secondary" id="pause-btn">Pause Stream</button>
+        <button class="btn btn-secondary" id="record-btn">Start Recording</button>
+        
+        <button class="btn btn-outline-secondary" id="settings-toggle">Settings</button>
+      </div>
+
+      <div id="settings-panel" class="card mb-4 p-3 d-none" style="max-width: 500px;">
+        <h5>Settings</h5>
+        <div class="mb-3">
+          <label for="save-path" class="form-label">CSV Save Directory</label>
+          <input type="text" class="form-control" id="save-path" placeholder="/Users/wentaogao/Desktop/myo-app/" />
+        </div>
+        <div class="mb-3">
+          <label for="data-label" class="form-label">Pose Label</label>
+          <input type="text" class="form-control" id="data-label" placeholder="e.g. fist, rest, wave" />
+        </div>
+        <button class="btn btn-sm btn-primary" id="save-settings-btn">Save Settings</button>
+        <div class="form-text text-success d-none" id="settings-saved-msg">Settings saved!</div>
+      </div>
+
+      <ul class="list-group mb-2" id="device-list"></ul>
+
+      <div class="row">
+        <!-- Left side: EMG -->
+        <div class="col-md-6">
+          <h2 class="h5">EMG Signal</h2>
+          <div id="emg-charts" class="row row-cols-2 g-2"></div> <!-- Bootstrap grid -->
+        </div>
+      
+        <!-- Right side: IMU -->
+        <div class="col-md-6">
+          <h2 class="h5">IMU Orientation</h2>
+          <div id="imu-canvas" style="width: 100%; height: 300px; background: #f8f9fa;"></div>
+        </div>
+      </div>
+
+      
+    </div>
+
+    <!-- Bootstrap JS & dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r121/three.min.js"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <!-- Myo FrontEnd functions -->
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+  </body>
+</html>
