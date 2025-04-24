@@ -3,15 +3,32 @@
  */
 
 // Utility to update connection badge
-function setStatus(text, colorClass, battery = null) {
+function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
     const badge = document.getElementById("status-badge");
     badge.textContent = text;
     badge.className = "badge " + colorClass;  
+
     if (battery == null) {
         batteryBadge.classList.add("d-none");
     } else {
         batteryBadge.textContent = battery + " %";
         batteryBadge.classList.remove("d-none");
+    }
+
+    const modelBadge = document.getElementById("model-badge");
+    if (model == null) {
+        modelBadge.classList.add("d-none");
+    } else {
+        modelBadge.textContent = model;
+        modelBadge.classList.remove("d-none");
+    }
+
+    const firmwareBadge = document.getElementById("firmware-badge");
+    if (firmware == null) {
+        firmwareBadge.classList.add("d-none");
+    } else {
+        firmwareBadge.textContent = "v" + firmware;
+        firmwareBadge.classList.remove("d-none");
     }
 }
 
@@ -53,7 +70,7 @@ async function pollStatus() {
         const resp = await fetch("/status");
         const js   = await resp.json();
         if (js.connected) {
-            setStatus("Connected", "bg-success", js.battery);
+            setStatus("Connected", "bg-success", js.battery, js.model, js.firmware);        
         } else {
             clearInterval(pollTimer);
             pollTimer = null;
