@@ -14,8 +14,13 @@ import csv, os, json
 # BLE services constants 
 _COMMAND_UUID = "d5060401-a904-deb9-4748-2c7f4a124842"  # Myo control characteristic
 _VOLT_UUID   = "d5060404-a904-deb9-4748-2c7f4a124842"  # Hidden voltage characteristic
-_BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"  # Battery Service (may be absent)
+_BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"  # Battery Service 
+_MYO_INFO_UUID = "d5060101-a904-deb9-4748-2c7f4a124842" # Model name
+_MYO_FIRMWARE_UUID = "d5060201-a904-deb9-4748-2c7f4a124842" # Firmware version
 _MYO_SERVICE_PREFIX = "d506"  # Any service that starts with this is Myo-specific
+
+_EMG_UUID = "d5060105-a904-deb9-4748-2c7f4a124842"
+_IMU_UUID = "d5060402-a904-deb9-4748-2c7f4a124842"
 
 # Enable raw EMG + IMU
 _SET_MODE_CMD = bytearray([0x01, 3, 0x03, 0x03, 0x00])
@@ -53,6 +58,8 @@ class MyoManager:
         self._battery: Optional[int] = None
         self._keep_alive_task: Optional[asyncio.Task] = None
         self._last_error: Optional[str] = None
+        self._sku = None
+        self._firmware_version = None
 
     # ---------- Public sync wrappers called from Flask ----------
     def scan(self) -> List[Dict[str, str]]:
@@ -82,6 +89,24 @@ class MyoManager:
     @property
     def battery(self) -> Optional[int]:
         return self._battery
+    
+    @property
+    def sku(self) -> Optional[int]:
+        return self._sku
+    
+    @property
+    def firmware_version(self):
+        return self._firmware_version
+
+    @property
+    def model_name(self) -> Optional[str]:
+        models = {
+            1: "MYO Black",
+            2: "MYO White",
+            3: "MYOD5",
+            0: "Unknown/Old"
+        }
+        return models.get(self._sku, f"SKU {self._sku}" if self._sku is not None else None)
 
     @property
     def last_error(self) -> Optional[str]:
@@ -100,7 +125,7 @@ class MyoManager:
                 socketio.emit("emg", {"samples": samples})
 
         try:
-            await self._client.start_notify("d5060105-a904-deb9-4748-2c7f4a124842", notification_handler)
+            await self._client.start_notify(_EMG_UUID, notification_handler)
         except Exception as e:
             print(f"EMG stream error: {e}")
 
@@ -119,7 +144,7 @@ class MyoManager:
 
         try:
             print("Starting IMU notify...")
-            await self._client.start_notify("d5060402-a904-deb9-4748-2c7f4a124842", imu_handler)
+            await self._client.start_notify(_IMU_UUID, imu_handler)
             print("IMU stream started.")
         except Exception as e:
             print(f"IMU stream error: {e}")
@@ -165,9 +190,13 @@ class MyoManager:
                 await self._client.write_gatt_char(_COMMAND_UUID, _SET_MODE_CMD, response=True)
                 await self._client.write_gatt_char(_COMMAND_UUID, _NEVER_SLEEP_CMD, response=True)
 
+                # Get info about the MYO
                 self._connected = True
                 await self._read_battery()
+                await self._read_model_info()
+                await self._read_firmware_info()
 
+                # Start streaming EMG and IMU
                 await self._client.write_gatt_char(_COMMAND_UUID, _SET_MODE_CMD, response=True)
                 await asyncio.sleep(0.1)
                 await self._start_emg_stream()
@@ -240,6 +269,29 @@ class MyoManager:
             pass
         self._battery = None  
 
+    async def _read_model_info(self):
+        try:
+            data = await self._client.read_gatt_char(_MYO_INFO_UUID)
+            if len(data) == 20:
+                self._sku = data[12]
+                print(f"[DEBUG] Myo SKU: {self._sku}")
+        except Exception as e:
+            print(f"Failed to read model info: {e}")
+            self._sku = None
+            
+    async def _read_firmware_info(self):
+        try:
+            data = await self._client.read_gatt_char(_MYO_FIRMWARE_UUID)
+            if len(data) >= 6:
+                major = int.from_bytes(data[0:2], byteorder="little")
+                minor = int.from_bytes(data[2:4], byteorder="little")
+                patch = int.from_bytes(data[4:6], byteorder="little")
+                self._firmware_version = f"{major}.{minor}.{patch}"
+                print(f"[DEBUG] Firmware version: {self._firmware_version}")
+        except Exception as e:
+            print(f"Failed to read firmware version: {e}")
+            self._firmware_version = None
+
     # ---------- BLE callback executed on Bleak thread ----------
     def _on_ble_disconnect(self, _):
         if loop.is_running():
@@ -293,11 +345,15 @@ def vibrate():
 @app.route("/status")
 def status():
     myo.refresh_battery_async()
+    
     # If connected, suppress stale errors so UI stays green
     error = None if myo.connected else myo.last_error
+
     return jsonify({
         "connected": myo.connected,
         "battery": myo.battery,
+        "model": myo.model_name,
+        "firmware": myo.firmware_version,
         "error": error,
     })
 
@@ -307,38 +363,50 @@ def save_data():
     path = content.get("path")
     data = content.get("data")
 
+    if not path or not data:
+        return jsonify({"error": "Missing path or data"}), 400
+
     dir_path = os.path.dirname(path)
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path, exist_ok=True)
+    os.makedirs(dir_path, exist_ok=True)
 
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
+    try:
+        with open(path, "w", newline="") as f:
+            # Write metadata block at the top
+            f.write(f"# Firmware: {myo.firmware_version or 'unknown'}\n")
+            f.write(f"# SKU: {myo.sku or 'unknown'}\n")
+            f.write(f"# Model: {myo.model_name or 'unknown'}\n")
+            f.write(f"# Format: timestamp, emg_0...7, quat_wxyz, acc_xyz, gyro_xyz, label\n")
 
-        # Header
-        writer.writerow([
-            "timestamp",
-            *[f"emg_{i}" for i in range(8)],
-            "quat_w", "quat_x", "quat_y", "quat_z",
-            "acc_x", "acc_y", "acc_z",
-            "gyro_x", "gyro_y", "gyro_z",
-            "label"
-        ])
+            writer = csv.writer(f)
 
-        for row in data:
-            ts = row.get("timestamp", "")
-            label = row.get("label", "unlabeled")
-            emg = row.get("emg", [""] * 8)
-
-            imu = row.get("imu") or {} 
-            quat = imu.get("quat", [""] * 4)
-            acc = imu.get("acc", [""] * 3)
-            gyro = imu.get("gyro", [""] * 3)
-
+            # Header row
             writer.writerow([
-                ts, *emg,
-                *quat, *acc, *gyro,
-                label
+                "timestamp",
+                *[f"emg_{i}" for i in range(8)],
+                "quat_w", "quat_x", "quat_y", "quat_z",
+                "acc_x", "acc_y", "acc_z",
+                "gyro_x", "gyro_y", "gyro_z",
+                "label"
             ])
+
+            for row in data:
+                ts = row.get("timestamp", "")
+                label = row.get("label", "unlabeled")
+                emg = row.get("emg", [""] * 8)
+
+                imu = row.get("imu") or {}
+                quat = imu.get("quat", [""] * 4)
+                acc = imu.get("acc", [""] * 3)
+                gyro = imu.get("gyro", [""] * 3)
+
+                writer.writerow([
+                    ts, *emg,
+                    *quat, *acc, *gyro,
+                    label
+                ])
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
     return jsonify({"success": True})
 

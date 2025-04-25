@@ -3,15 +3,32 @@
  */
 
 // Utility to update connection badge
-function setStatus(text, colorClass, battery = null) {
+function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
     const badge = document.getElementById("status-badge");
     badge.textContent = text;
     badge.className = "badge " + colorClass;  
+
     if (battery == null) {
         batteryBadge.classList.add("d-none");
     } else {
         batteryBadge.textContent = battery + " %";
         batteryBadge.classList.remove("d-none");
+    }
+
+    const modelBadge = document.getElementById("model-badge");
+    if (model == null) {
+        modelBadge.classList.add("d-none");
+    } else {
+        modelBadge.textContent = model;
+        modelBadge.classList.remove("d-none");
+    }
+
+    const firmwareBadge = document.getElementById("firmware-badge");
+    if (firmware == null) {
+        firmwareBadge.classList.add("d-none");
+    } else {
+        firmwareBadge.textContent = "v" + firmware;
+        firmwareBadge.classList.remove("d-none");
     }
 }
 
@@ -24,8 +41,6 @@ const vibrateBtn = document.getElementById("vibrate-btn");
 const deviceList = document.getElementById("device-list");
 const batteryBadge = document.getElementById("battery-badge");
 const pauseBtn = document.getElementById("pause-btn");
-const recordBtn = document.getElementById("record-btn");
-const labelInput = document.getElementById("data-label");
 
 let latestIMU = null;
 let selectedAddress = null;
@@ -36,6 +51,10 @@ let recording = false;
 let recordedData = [];
 
 let savePath = "";
+
+let timerId = null;
+let isRawMode = false;
+let currentLabel = "";
 
 // Helper for POST JSON
 async function postJSON(url, data = {}) {
@@ -53,7 +72,7 @@ async function pollStatus() {
         const resp = await fetch("/status");
         const js   = await resp.json();
         if (js.connected) {
-            setStatus("Connected", "bg-success", js.battery);
+            setStatus("Connected", "bg-success", js.battery, js.model, js.firmware);        
         } else {
             clearInterval(pollTimer);
             pollTimer = null;
@@ -151,51 +170,101 @@ pauseBtn.addEventListener("click", () => {
     pauseBtn.textContent = emgPaused ? "Resume Stream" : "Pause Stream";
 });
 
-recordBtn.addEventListener("click", () => {
-    if (!recording) {
-        const labelInput = document.getElementById("data-label");
-        currentLabel = labelInput.value.trim() || "unlabeled";
-    }
-    recording = !recording;
-    recordBtn.textContent = recording ? "Stop Recording" : "Start Recording";
+const freeRecordBtn = document.getElementById("free-record-btn");
+const timerRecordBtn = document.getElementById("start-timer-btn");
+const recordIndicator = document.getElementById("recording-indicator");
 
-    if (!recording && recordedData.length > 0 && savePath) {
-        const labelInput = document.getElementById("data-label");
-        currentLabel = labelInput.value.trim() || "unlabeled";
+function updateRecordingUI(isRecording, source) {
+  const activeBtn = source === "free" ? freeRecordBtn : timerRecordBtn;
+  const otherBtn = source === "free" ? timerRecordBtn : freeRecordBtn;
 
-        let finalPath = savePath.replace(/\/$/, "");
-        const now = new Date();
-        const timestampStr = now.toISOString().replace(/[:.]/g, "-");
-        const fileName = `myo_raw_${currentLabel}_${timestampStr}.csv`;
-        finalPath += `/${fileName}`;
+  if (isRecording) {
+    activeBtn.classList.remove("btn-outline-primary");
+    activeBtn.classList.add("btn-danger");
+    activeBtn.textContent = "Stop";
+    otherBtn.disabled = true;
+    recordIndicator.classList.remove("d-none");
+  } else {
+    freeRecordBtn.classList.remove("btn-danger");
+    freeRecordBtn.classList.add("btn-outline-primary");
+    freeRecordBtn.textContent = "Free Record";
 
-        fetch("/save-data", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: finalPath, data: recordedData }),
-        }).then(() => {
-            alert("Data saved to " + finalPath);
-            recordedData = [];
-        }).catch((err) => {
-            console.error("Save error", err);
-            alert("Failed to save data.");
-        });
-    }
+    timerRecordBtn.classList.remove("btn-danger");
+    timerRecordBtn.classList.add("btn-outline-primary");
+    timerRecordBtn.textContent = "Timer Record";
+
+    freeRecordBtn.disabled = false;
+    timerRecordBtn.disabled = false;
+
+    recordIndicator.classList.add("d-none");
+  }
+}
+
+function startRecording(source, duration = null) {
+  if (recording) {
+    stopRecording();
+    return;
+  }
+
+  const savePathInput = document.getElementById("record-save-path");
+  const labelInput = document.getElementById("record-label");
+  const rawSwitch = document.getElementById("raw-mode-switch");
+
+  savePath = savePathInput.value.trim();
+  currentLabel = labelInput.value.trim() || "unlabeled";
+  isRawMode = rawSwitch.checked;
+  recordedData = [];
+
+  recording = true;
+  updateRecordingUI(true, source);
+
+  if (source === "timer" && duration > 0) {
+    timerId = setTimeout(() => {
+      stopRecording();
+    }, duration * 1000);
+  }
+}
+
+function stopRecording() {
+  recording = false;
+  updateRecordingUI(false);
+  if (timerId) {
+    clearTimeout(timerId);
+    timerId = null;
+  }
+
+  if (recordedData.length > 0 && savePath) {
+    const now = new Date();
+    const timestampStr = now.toISOString().replace(/[:.]/g, "-");
+    const fileName = `myo_${isRawMode ? "raw" : "processed"}_${currentLabel}_${timestampStr}.csv`;
+    const finalPath = savePath.replace(/\/$/, "") + `/${fileName}`;
+
+    fetch("/save-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: finalPath, data: recordedData }),
+    }).then(() => {
+      alert("Data saved to " + finalPath);
+    }).catch((err) => {
+      console.error("Save error", err);
+      alert("Failed to save data.");
+    });
+  }
+}
+
+freeRecordBtn.addEventListener("click", () => {
+  startRecording("free");
 });
 
-document.getElementById("settings-toggle").addEventListener("click", () => {
-    const panel = document.getElementById("settings-panel");
-    panel.classList.toggle("d-none");
+timerRecordBtn.addEventListener("click", () => {
+  const secs = parseFloat(document.getElementById("record-timer").value);
+  if (!isNaN(secs) && secs > 0) {
+    startRecording("timer", secs);
+  } else {
+    alert("Enter a valid duration in seconds.");
+  }
 });
 
-document.getElementById("save-settings-btn").addEventListener("click", () => {
-    const input = document.getElementById("save-path");
-    savePath = input.value.trim();
-
-    const msg = document.getElementById("settings-saved-msg");
-    msg.classList.remove("d-none");
-    setTimeout(() => msg.classList.add("d-none"), 2000);
-});
 
 function toggleButtons(connected) {
     disconnectBtn.disabled = !connected;
@@ -244,7 +313,6 @@ const MAX_POINTS = 200; // ~1 s of data at 200 Hz
 })();
 
 function pushFrame(frame) {
-
     if (emgPaused) return;
 
     frame.forEach((val, ch) => {

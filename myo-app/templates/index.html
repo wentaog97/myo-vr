@@ -25,6 +25,8 @@
       <div class="mb-3">
         <span class="badge bg-secondary" id="status-badge">Disconnected</span>
         <span class="badge bg-info ms-2 d-none" id="battery-badge">--%</span>
+        <span class="badge bg-secondary ms-2 d-none" id="model-badge">MYO</span>
+        <span class="badge bg-secondary ms-2 d-none" id="firmware-badge">v1.5.x</span>
       </div>
 
       <div class="d-flex gap-2 mb-4 flex-wrap">
@@ -35,12 +37,11 @@
         <button class="btn btn-primary" id="vibrate-btn" disabled>Vibrate</button>
 
         <button class="btn btn-secondary" id="pause-btn">Pause Stream</button>
-        <button class="btn btn-secondary" id="record-btn">Start Recording</button>
-        
-        <button class="btn btn-outline-secondary" id="settings-toggle">Settings</button>
+        <!-- button class="btn btn-secondary" id="record-btn">Start Recording</button -->
+        <!-- button class="btn btn-outline-secondary" id="settings-toggle">Settings</button -->
       </div>
 
-      <div id="settings-panel" class="card mb-4 p-3 d-none" style="max-width: 500px;">
+      <!-- div id="settings-panel" class="card mb-4 p-3 d-none" style="max-width: 500px;">
         <h5>Settings</h5>
         <div class="mb-3">
           <label for="save-path" class="form-label">CSV Save Directory</label>
@@ -52,7 +53,7 @@
         </div>
         <button class="btn btn-sm btn-primary" id="save-settings-btn">Save Settings</button>
         <div class="form-text text-success d-none" id="settings-saved-msg">Settings saved!</div>
-      </div>
+      </div -->
 
       <ul class="list-group mb-2" id="device-list"></ul>
 
@@ -63,12 +64,55 @@
           <div id="emg-charts" class="row row-cols-2 g-2"></div> <!-- Bootstrap grid -->
         </div>
       
-        <!-- Right side: IMU -->
-        <div class="col-md-6">
-          <h2 class="h5">IMU Orientation</h2>
-          <div id="imu-canvas" style="width: 100%; height: 300px; background: #f8f9fa;"></div>
+        <!-- Right side: Recording + IMU -->
+        <div class="col-md-6 d-flex flex-column" style="height: 100%;">
+          
+          <!-- Recording Panel -->
+        <div class="card mb-3 p-3">
+          <h2 class="h5">Data collection</h2>
+        
+          <div class="mb-2">
+            <label for="record-save-path" class="form-label">Save Path</label>
+            <input type="text" class="form-control" id="record-save-path" placeholder="/path/to/save/">
+          </div>
+        
+          <div class="mb-2">
+            <label for="record-label" class="form-label">Label</label>
+            <input type="text" class="form-control" id="record-label" placeholder="e.g. fist, rest, wave">
+          </div>
+        
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="raw-mode-switch">
+            <label class="form-check-label" for="raw-mode-switch">Record Raw Hex (bypass processing)</label>
+          </div>
+        
+          <div class="row g-2 align-items-center mb-3">
+            <div class="col-auto">
+              <button class="btn btn-outline-primary" id="free-record-btn">Free Record</button>
+            </div>
+            <div class="col">
+              <input type="number" class="form-control" id="record-timer" placeholder="Seconds">
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-outline-primary" id="start-timer-btn">Timer Record</button>
+            </div>
+          </div>
+        
+          <div id="recording-indicator" class="alert alert-danger text-center d-none" role="alert">
+            Recording...
+          </div>
+        </div>
+                
+      
+          <!-- IMU Orientation (flex-grow) -->
+          <div class="flex-grow-1 d-flex flex-column">
+            <h2 class="h5">IMU Orientation</h2>
+            <div id="imu-canvas" style="width: 100%; flex-grow: 1; background: #f8f9fa;"></div>
+          </div>
+      
         </div>
       </div>
+      
 
       
     </div>
