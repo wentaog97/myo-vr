@@ -363,38 +363,50 @@ def save_data():
     path = content.get("path")
     data = content.get("data")
 
+    if not path or not data:
+        return jsonify({"error": "Missing path or data"}), 400
+
     dir_path = os.path.dirname(path)
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path, exist_ok=True)
+    os.makedirs(dir_path, exist_ok=True)
 
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
+    try:
+        with open(path, "w", newline="") as f:
+            # Write metadata block at the top
+            f.write(f"# Firmware: {myo.firmware_version or 'unknown'}\n")
+            f.write(f"# SKU: {myo.sku or 'unknown'}\n")
+            f.write(f"# Model: {myo.model_name or 'unknown'}\n")
+            f.write(f"# Format: timestamp, emg_0...7, quat_wxyz, acc_xyz, gyro_xyz, label\n")
 
-        # Header
-        writer.writerow([
-            "timestamp",
-            *[f"emg_{i}" for i in range(8)],
-            "quat_w", "quat_x", "quat_y", "quat_z",
-            "acc_x", "acc_y", "acc_z",
-            "gyro_x", "gyro_y", "gyro_z",
-            "label"
-        ])
+            writer = csv.writer(f)
 
-        for row in data:
-            ts = row.get("timestamp", "")
-            label = row.get("label", "unlabeled")
-            emg = row.get("emg", [""] * 8)
-
-            imu = row.get("imu") or {} 
-            quat = imu.get("quat", [""] * 4)
-            acc = imu.get("acc", [""] * 3)
-            gyro = imu.get("gyro", [""] * 3)
-
+            # Header row
             writer.writerow([
-                ts, *emg,
-                *quat, *acc, *gyro,
-                label
+                "timestamp",
+                *[f"emg_{i}" for i in range(8)],
+                "quat_w", "quat_x", "quat_y", "quat_z",
+                "acc_x", "acc_y", "acc_z",
+                "gyro_x", "gyro_y", "gyro_z",
+                "label"
             ])
+
+            for row in data:
+                ts = row.get("timestamp", "")
+                label = row.get("label", "unlabeled")
+                emg = row.get("emg", [""] * 8)
+
+                imu = row.get("imu") or {}
+                quat = imu.get("quat", [""] * 4)
+                acc = imu.get("acc", [""] * 3)
+                gyro = imu.get("gyro", [""] * 3)
+
+                writer.writerow([
+                    ts, *emg,
+                    *quat, *acc, *gyro,
+                    label
+                ])
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
     return jsonify({"success": True})
 
