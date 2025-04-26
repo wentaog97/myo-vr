@@ -19,6 +19,7 @@ const recordIndicator = document.getElementById("recording-indicator");
 const optionsBtn = document.getElementById("options-btn");
 const optionsPanel = document.getElementById("options-panel");
 const chartSizeSlider = document.getElementById("chart-size-slider");
+const mergeModeSelect = document.getElementById("merge-mode-select");
 
 let latestIMU = null;
 let selectedAddress = null;
@@ -33,6 +34,14 @@ let savePath = "";
 let timerId = null;
 let isRawMode = false;
 let currentLabel = "";
+
+let mergeFactor = 1;  // Default no merge
+let mergeBuffer = [];
+
+
+mergeModeSelect.addEventListener("change", (e) => {
+  mergeFactor = parseInt(e.target.value);
+});
 
 // Helper for POST JSON
 async function postJSON(url, data = {}) {
@@ -417,14 +426,34 @@ const MAX_POINTS = 200; // ~1 s of data at 200 Hz
 
 
 function pushFrame(frame) {
-    if (emgPaused) return;
+  if (emgPaused) return;
 
-    frame.forEach((val, ch) => {
-        const d = emgCharts[ch].data.datasets[0].data;
-        d.push(val);
-        if (d.length > MAX_POINTS) d.shift();
-        emgCharts[ch].update("none");
-    });
+  mergeBuffer.push(frame);
+
+  if (mergeBuffer.length >= mergeFactor) {
+      // Merge the buffered frames
+      const merged = [];
+
+      for (let ch = 0; ch < 8; ch++) {
+          let sum = 0;
+          let count = 0;
+          for (let f = 0; f < mergeBuffer.length; f++) {
+              sum += mergeBuffer[f][ch];
+              count++;
+          }
+          merged.push(sum / count);
+      }
+
+      // Push merged data into each channel
+      merged.forEach((val, ch) => {
+          const d = emgCharts[ch].data.datasets[0].data;
+          d.push(val);
+          if (d.length > MAX_POINTS) d.shift();
+          emgCharts[ch].update("none");
+      });
+
+      mergeBuffer = [];  // Clear buffer
+  }
 }
 
 // Socket.IO: receive packets {"t": float, "samples": [[8],[8]]}
