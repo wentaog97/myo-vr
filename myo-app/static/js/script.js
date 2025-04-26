@@ -2,36 +2,6 @@
  *  Myo visualizer - frontend 
  */
 
-// Utility to update connection badge
-function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
-    const badge = document.getElementById("status-badge");
-    badge.textContent = text;
-    badge.className = "badge " + colorClass;  
-
-    if (battery == null) {
-        batteryBadge.classList.add("d-none");
-    } else {
-        batteryBadge.textContent = battery + " %";
-        batteryBadge.classList.remove("d-none");
-    }
-
-    const modelBadge = document.getElementById("model-badge");
-    if (model == null) {
-        modelBadge.classList.add("d-none");
-    } else {
-        modelBadge.textContent = model;
-        modelBadge.classList.remove("d-none");
-    }
-
-    const firmwareBadge = document.getElementById("firmware-badge");
-    if (firmware == null) {
-        firmwareBadge.classList.add("d-none");
-    } else {
-        firmwareBadge.textContent = "v" + firmware;
-        firmwareBadge.classList.remove("d-none");
-    }
-}
-
 // Buttons & UI elements
 const scanBtn = document.getElementById("scan-btn");
 const connectBtn = document.getElementById("connect-btn");
@@ -41,6 +11,15 @@ const vibrateBtn = document.getElementById("vibrate-btn");
 const deviceList = document.getElementById("device-list");
 const batteryBadge = document.getElementById("battery-badge");
 const pauseBtn = document.getElementById("pause-btn");
+const emgModeSelect = document.getElementById("emg-mode-select");
+const imuModeSelect = document.getElementById("imu-mode-select");
+const freeRecordBtn = document.getElementById("free-record-btn");
+const timerRecordBtn = document.getElementById("start-timer-btn");
+const recordIndicator = document.getElementById("recording-indicator");
+const optionsBtn = document.getElementById("options-btn");
+const optionsPanel = document.getElementById("options-panel");
+const chartSizeSlider = document.getElementById("chart-size-slider");
+const mergeModeSelect = document.getElementById("merge-mode-select");
 
 let latestIMU = null;
 let selectedAddress = null;
@@ -56,6 +35,14 @@ let timerId = null;
 let isRawMode = false;
 let currentLabel = "";
 
+let mergeFactor = 1;  // Default no merge
+let mergeBuffer = [];
+
+
+mergeModeSelect.addEventListener("change", (e) => {
+  mergeFactor = parseInt(e.target.value);
+});
+
 // Helper for POST JSON
 async function postJSON(url, data = {}) {
     const res = await fetch(url, {
@@ -64,6 +51,36 @@ async function postJSON(url, data = {}) {
         body: JSON.stringify(data),
     });
     return res;
+}
+
+// Utility to update connection badge
+function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
+  const badge = document.getElementById("status-badge");
+  badge.textContent = text;
+  badge.className = "badge " + colorClass;  
+
+  if (battery == null) {
+      batteryBadge.classList.add("d-none");
+  } else {
+      batteryBadge.textContent = battery + " %";
+      batteryBadge.classList.remove("d-none");
+  }
+
+  const modelBadge = document.getElementById("model-badge");
+  if (model == null) {
+      modelBadge.classList.add("d-none");
+  } else {
+      modelBadge.textContent = model;
+      modelBadge.classList.remove("d-none");
+  }
+
+  const firmwareBadge = document.getElementById("firmware-badge");
+  if (firmware == null) {
+      firmwareBadge.classList.add("d-none");
+  } else {
+      firmwareBadge.textContent = "v" + firmware;
+      firmwareBadge.classList.remove("d-none");
+  }
 }
 
 // Poll myo status every 5 s while connected
@@ -83,6 +100,39 @@ async function pollStatus() {
         console.error(e);
     }
 }
+
+function showToast(message) {
+  const toastBody = document.getElementById("toast-body");
+  toastBody.textContent = message;
+  const toastEl = document.getElementById("liveToast");
+  const toast = new bootstrap.Toast(toastEl);
+  toast.show();
+}
+
+async function updateMode() {
+  const emgMode = parseInt(emgModeSelect.value, 16);
+  const imuMode = parseInt(imuModeSelect.value, 16);
+
+  try {
+      const res = await postJSON("/update-mode", {
+          emg_mode: emgMode,
+          imu_mode: imuMode
+      });
+
+      const js = await res.json();
+      if (res.ok && js.success) {
+        showToast(`Updated: EMG Mode set to ${emgMode === 0x03 ? "Raw" : (emgMode === 0x02 ? "Filtered" : "None")}, IMU Mode set to ${["None", "Data", "Events", "All", "Raw"][imuMode]}`);
+      } else {
+        showToast(`Failed to update mode: ${js.error || "Unknown error"}`);
+      }
+  } catch (e) {
+      console.error("Mode update failed", e);
+      showToast("Failed to update mode.");
+  }
+}
+
+emgModeSelect.addEventListener("change", updateMode);
+imuModeSelect.addEventListener("change", updateMode);
 
 // Scan for devices
 scanBtn.addEventListener("click", async () => {
@@ -122,23 +172,31 @@ scanBtn.addEventListener("click", async () => {
 
 // Connect
 connectBtn.addEventListener("click", async () => {
-    if (!selectedAddress) return;
-    setStatus("Connecting...", "bg-info");
-    try {
-        const res = await postJSON("/connect", { address: selectedAddress });
-        const js = await res.json();
-        if (res.ok && js.success) {
-            setStatus("Connected", "bg-success");   
-            toggleButtons(true);
-            pollStatus();                          
-            pollTimer = setInterval(pollStatus, 5000);
-        } else {
-            setStatus(js.message || "Connect error", "bg-danger");
-        }
-    } catch (e) {
-        setStatus("Connect failed", "bg-danger");
-        console.error(e);
-    }
+  if (!selectedAddress) return;
+  setStatus("Connecting...", "bg-info");
+  try {
+      const emgMode = parseInt(emgModeSelect.value, 16);
+      const imuMode = parseInt(imuModeSelect.value, 16);
+
+      const res = await postJSON("/connect", { 
+          address: selectedAddress,
+          emg_mode: emgMode,
+          imu_mode: imuMode
+      });
+
+      const js = await res.json();
+      if (res.ok && js.success) {
+          setStatus("Connected", "bg-success");   
+          toggleButtons(true);
+          pollStatus();                          
+          pollTimer = setInterval(pollStatus, 5000);
+      } else {
+          setStatus(js.message || "Connect error", "bg-danger");
+      }
+  } catch (e) {
+      setStatus("Connect failed", "bg-danger");
+      console.error(e);
+  }
 });
 
 // Disconnect
@@ -152,6 +210,15 @@ disconnectBtn.addEventListener("click", async () => {
         pollTimer = null;
         batteryBadge.classList.add("d-none");
     }
+});
+
+// Ensure device disconnects when window is closed
+window.addEventListener("beforeunload", () => {
+  try {
+      navigator.sendBeacon("/disconnect");
+  } catch (e) {
+      console.error("Failed to auto-disconnect", e);
+  }
 });
 
 // Reset / Turn off
@@ -169,10 +236,6 @@ pauseBtn.addEventListener("click", () => {
     emgPaused = !emgPaused;
     pauseBtn.textContent = emgPaused ? "Resume Stream" : "Pause Stream";
 });
-
-const freeRecordBtn = document.getElementById("free-record-btn");
-const timerRecordBtn = document.getElementById("start-timer-btn");
-const recordIndicator = document.getElementById("recording-indicator");
 
 function updateRecordingUI(isRecording, source) {
   const activeBtn = source === "free" ? freeRecordBtn : timerRecordBtn;
@@ -199,6 +262,28 @@ function updateRecordingUI(isRecording, source) {
     recordIndicator.classList.add("d-none");
   }
 }
+
+optionsBtn.addEventListener("click", (e) => {
+  e.stopPropagation(); // Prevent closing immediately
+  optionsPanel.classList.toggle("d-none");
+});
+
+// Hide the panel when clicking outside
+document.addEventListener("click", (e) => {
+  if (!optionsPanel.contains(e.target) && e.target !== optionsBtn) {
+      optionsPanel.classList.add("d-none");
+  }
+});
+
+chartSizeSlider.addEventListener("input", (e) => {
+  const newHeight = parseInt(e.target.value);
+
+  emgCharts.forEach((chart) => {
+    const container = chart.canvas.parentNode;
+    container.style.height = `${newHeight}px`;
+  });
+});
+
 
 function startRecording(source, duration = null) {
   if (recording) {
@@ -233,21 +318,26 @@ function stopRecording() {
     timerId = null;
   }
 
-  if (recordedData.length > 0 && savePath) {
+  if (recordedData.length > 0) {
     const now = new Date();
     const timestampStr = now.toISOString().replace(/[:.]/g, "-");
-    const fileName = `myo_${isRawMode ? "raw" : "processed"}_${currentLabel}_${timestampStr}.csv`;
-    const finalPath = savePath.replace(/\/$/, "") + `/${fileName}`;
+    const fileName = `myo_${isRawMode ? "hex" : "parsed"}_${currentLabel}_${timestampStr}.csv`;
+
+    // If savePath is empty, just use fileName directly
+    let finalPath = fileName;
+    if (savePath) {
+      finalPath = savePath.replace(/\/$/, "") + `/${fileName}`;
+    }
 
     fetch("/save-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: finalPath, data: recordedData }),
     }).then(() => {
-      alert("Data saved to " + finalPath);
+      showToast("Data saved to output folder!");
     }).catch((err) => {
       console.error("Save error", err);
-      alert("Failed to save data.");
+      showToast("Failed to save data.");
     });
   }
 }
@@ -264,7 +354,6 @@ timerRecordBtn.addEventListener("click", () => {
     alert("Enter a valid duration in seconds.");
   }
 });
-
 
 function toggleButtons(connected) {
     disconnectBtn.disabled = !connected;
@@ -312,40 +401,102 @@ const MAX_POINTS = 200; // ~1 s of data at 200 Hz
   }
 })();
 
-function pushFrame(frame) {
-    if (emgPaused) return;
+// Ensure single instance of the tab
+(function() {
+  const TAB_KEY = 'myo-single-tab-id';
+  const MY_TAB_ID = Date.now().toString() + Math.random().toString();
 
-    frame.forEach((val, ch) => {
-        const d = emgCharts[ch].data.datasets[0].data;
-        d.push(val);
-        if (d.length > MAX_POINTS) d.shift();
-        emgCharts[ch].update("none");
-    });
+  // Register self
+  localStorage.setItem(TAB_KEY, MY_TAB_ID);
+
+  window.addEventListener('storage', (e) => {
+      if (e.key === TAB_KEY && e.newValue !== MY_TAB_ID) {
+          alert("Another Myo Control tab is already open. Closing this tab...");
+          window.close();
+      }
+  });
+
+  window.addEventListener('beforeunload', () => {
+      // Only clear if it's still the owner
+      if (localStorage.getItem(TAB_KEY) === MY_TAB_ID) {
+          localStorage.removeItem(TAB_KEY);
+      }
+  });
+})();
+
+
+function pushFrame(frame) {
+  if (emgPaused) return;
+
+  mergeBuffer.push(frame);
+
+  if (mergeBuffer.length >= mergeFactor) {
+      // Merge the buffered frames
+      const merged = [];
+
+      for (let ch = 0; ch < 8; ch++) {
+          let sum = 0;
+          let count = 0;
+          for (let f = 0; f < mergeBuffer.length; f++) {
+              sum += mergeBuffer[f][ch];
+              count++;
+          }
+          merged.push(sum / count);
+      }
+
+      // Push merged data into each channel
+      merged.forEach((val, ch) => {
+          const d = emgCharts[ch].data.datasets[0].data;
+          d.push(val);
+          if (d.length > MAX_POINTS) d.shift();
+          emgCharts[ch].update("none");
+      });
+
+      mergeBuffer = [];  // Clear buffer
+  }
 }
 
 // Socket.IO: receive packets {"t": float, "samples": [[8],[8]]}
 const socket = io();
 
 socket.on("emg", (msg) => {
-    if (recording) {
-        msg.samples.forEach(sample => {
-            recordedData.push({
-                timestamp: Date.now(),
-                emg: sample,
-                imu: latestIMU,
-                label: currentLabel,
-            });
-        });
-    }    
-    msg.samples.forEach(pushFrame);
+  if (recording) {
+      if (isRawMode && msg.raw) {
+          recordedData.push({
+              timestamp: Date.now(),
+              type: "EMG",
+              raw_hex: msg.raw,
+              label: currentLabel,
+          });
+      } else {
+          msg.samples.forEach(sample => {
+              recordedData.push({
+                  timestamp: Date.now(),
+                  emg: sample,
+                  imu: latestIMU,
+                  label: currentLabel,
+              });
+          });
+      }
+  }
+  msg.samples.forEach(pushFrame);
 });
 
 socket.on("imu", (msg) => {
-    latestIMU = msg;
-    if (msg.quat) {
-        applyQuaternionToCube(msg.quat);
-    }
+  latestIMU = msg;
+  if (recording && isRawMode && msg.raw) {
+      recordedData.push({
+          timestamp: Date.now(),
+          type: "IMU",
+          raw_hex: msg.raw,
+          label: currentLabel,
+      });
+  }
+  if (msg.quat) {
+      applyQuaternionToCube(msg.quat);
+  }
 });
+
 
 function applyQuaternionToCube([w, x, y, z]) {
     const quat = new THREE.Quaternion(x, y, z, w);

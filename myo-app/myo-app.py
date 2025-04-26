@@ -19,11 +19,16 @@ _MYO_INFO_UUID = "d5060101-a904-deb9-4748-2c7f4a124842" # Model name
 _MYO_FIRMWARE_UUID = "d5060201-a904-deb9-4748-2c7f4a124842" # Firmware version
 _MYO_SERVICE_PREFIX = "d506"  # Any service that starts with this is Myo-specific
 
-_EMG_UUID = "d5060105-a904-deb9-4748-2c7f4a124842"
+_EMG_UUIDS = [
+    "d5060105-a904-deb9-4748-2c7f4a124842",
+    "d5060205-a904-deb9-4748-2c7f4a124842",
+    "d5060305-a904-deb9-4748-2c7f4a124842",
+    "d5060405-a904-deb9-4748-2c7f4a124842",
+]
 _IMU_UUID = "d5060402-a904-deb9-4748-2c7f4a124842"
 
 # Enable raw EMG + IMU
-_SET_MODE_CMD = bytearray([0x01, 3, 0x03, 0x03, 0x00])
+_SET_MODE_CMD = bytearray([0x01, 3, 0x03, 0x04, 0x00])
 # Never-sleep (silent heartbeat)
 _NEVER_SLEEP_CMD = bytearray([0x09, 0x01, 0x01])
 # Vibration payloads
@@ -56,17 +61,21 @@ class MyoManager:
         self._lock = asyncio.Lock()
         self._connected: bool = False
         self._battery: Optional[int] = None
-        self._keep_alive_task: Optional[asyncio.Task] = None
         self._last_error: Optional[str] = None
         self._sku = None
         self._firmware_version = None
+        self._emg_mode = 3  # Default raw EMG
+        self._imu_mode = 1  # Default raw IMU 
 
     # ---------- Public sync wrappers called from Flask ----------
     def scan(self) -> List[Dict[str, str]]:
         return run_async(self._scan())
 
-    def connect(self, address: str) -> None:
-        run_async(self._connect(address))
+    def connect(self, address: str, set_mode_cmd=None, emg_mode=3, imu_mode=1) -> None:
+        self._emg_mode = emg_mode
+        self._imu_mode = imu_mode
+        run_async(self._connect(address, set_mode_cmd))
+
 
     def disconnect_async(self) -> None:
         fire_and_forget(self._disconnect())
@@ -116,18 +125,24 @@ class MyoManager:
         if not self._client or not self._client.is_connected:
             return
 
-        def notification_handler(_, data: bytearray):
-            if len(data) == 16:
-                samples = [
-                    [int.from_bytes([b], byteorder="little", signed=True) for b in data[:8]],
-                    [int.from_bytes([b], byteorder="little", signed=True) for b in data[8:]]
-                ]
-                socketio.emit("emg", {"samples": samples})
+        def make_handler(char_idx: int):
+            def handler(_, data: bytearray):
+                if len(data) == 16:        # 2 × 8-ch samples
+                    samples = [
+                        [int.from_bytes([b], "little", signed=True) for b in data[:8]],
+                        [int.from_bytes([b], "little", signed=True) for b in data[8:]],
+                    ]
+                    socketio.emit("emg", {
+                        "bank": char_idx,        # tell the front-end which bank
+                        "samples": samples,
+                        "raw": data.hex(),
+                    })
+            return handler
 
-        try:
-            await self._client.start_notify(_EMG_UUID, notification_handler)
-        except Exception as e:
-            print(f"EMG stream error: {e}")
+        # Subscribe to every EMG characteristic
+        for idx, uuid in enumerate(_EMG_UUIDS):
+            await self._client.start_notify(uuid, make_handler(idx))
+
 
     async def _start_imu_stream(self):
         if not self._client or not self._client.is_connected:
@@ -135,12 +150,16 @@ class MyoManager:
             return
 
         def imu_handler(_, data: bytearray):
-            # print("IMU data received!!!!!")
             if len(data) == 20:
                 q = [int.from_bytes(data[i:i+2], byteorder="little", signed=True) / 16384.0 for i in range(0, 8, 2)]
                 a = [int.from_bytes(data[i:i+2], byteorder="little", signed=True) for i in range(8, 14, 2)]
                 g = [int.from_bytes(data[i:i+2], byteorder="little", signed=True) for i in range(14, 20, 2)]
-                socketio.emit("imu", {"quat": q, "acc": a, "gyro": g})
+                socketio.emit("imu", {
+                    "quat": q,
+                    "acc": a,
+                    "gyro": g,
+                    "raw": data.hex()
+                })
 
         try:
             print("Starting IMU notify...")
@@ -175,7 +194,7 @@ class MyoManager:
             for d in seen.values()
         ]
 
-    async def _connect(self, address: str):
+    async def _connect(self, address: str, set_mode_cmd=None):
         # First ensure any existing session is closed (outside lock)
         await self._disconnect()
 
@@ -187,7 +206,7 @@ class MyoManager:
                 self._client.set_disconnected_callback(self._on_ble_disconnect)
                 
                 # Configure stream + never-sleep heartbeat
-                await self._client.write_gatt_char(_COMMAND_UUID, _SET_MODE_CMD, response=True)
+                await self._client.write_gatt_char(_COMMAND_UUID, set_mode_cmd or _SET_MODE_CMD, response=True)
                 await self._client.write_gatt_char(_COMMAND_UUID, _NEVER_SLEEP_CMD, response=True)
 
                 # Get info about the MYO
@@ -197,13 +216,8 @@ class MyoManager:
                 await self._read_firmware_info()
 
                 # Start streaming EMG and IMU
-                await self._client.write_gatt_char(_COMMAND_UUID, _SET_MODE_CMD, response=True)
-                await asyncio.sleep(0.1)
                 await self._start_emg_stream()
-                await asyncio.sleep(0.1)
                 await self._start_imu_stream()
-                
-                self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
 
                 print(f"Connected to {address}")
 
@@ -215,15 +229,12 @@ class MyoManager:
     async def _disconnect(self):
         async with self._lock:
             if self._client and self._client.is_connected:
-                if self._keep_alive_task:
-                    self._keep_alive_task.cancel()
                 try:
                     await self._client.disconnect()
                 except Exception:
                     pass
             # Reset state
             self._client = None
-            self._keep_alive_task = None
             self._battery = None
             self._connected = False
             print("Disconnected")
@@ -236,17 +247,6 @@ class MyoManager:
             await self._client.write_gatt_char(_COMMAND_UUID, payload, response=True)
         except Exception as exc:
             self._last_error = f"Vibrate error: {exc}"
-
-    async def _keep_alive_loop(self):
-        try:
-            while self._connected:
-                await self._client.write_gatt_char(_COMMAND_UUID, _NEVER_SLEEP_CMD, response=True)
-                await asyncio.sleep(60)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            self._last_error = f"Keep-alive error: {exc}"
-            await self._disconnect()
 
     async def _read_battery(self):
         # Try standard Battery Service first
@@ -317,11 +317,20 @@ def scan():
 
 @app.route("/connect", methods=["POST"])
 def connect():
-    addr = (request.get_json() or {}).get("address")
+    content = request.get_json() or {}
+    addr = content.get("address")
+    emg_mode = content.get("emg_mode", 3)
+    imu_mode = content.get("imu_mode", 1)
+
     if not addr:
         abort(400, "address missing")
+
+    set_mode_cmd = bytearray([0x01, 3, emg_mode, imu_mode, 0x00])
+
     try:
-        myo.connect(addr)
+        myo.connect(addr, set_mode_cmd=set_mode_cmd)
+        myo._emg_mode = emg_mode
+        myo._imu_mode = imu_mode
         return jsonify({"success": True})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -357,53 +366,111 @@ def status():
         "error": error,
     })
 
+@app.route("/update-mode", methods=["POST"])
+def update_mode():
+    content = request.get_json() or {}
+    emg_mode = content.get("emg_mode")
+    imu_mode = content.get("imu_mode")
+
+    if emg_mode is None or imu_mode is None:
+        abort(400, "Missing modes")
+
+    set_mode_cmd = bytearray([0x01, 3, emg_mode, imu_mode, 0x00])
+
+    try:
+        if myo.connected and myo._client and myo._client.is_connected:
+            run_async(myo._client.write_gatt_char(_COMMAND_UUID, set_mode_cmd, response=True))
+            myo._emg_mode = emg_mode
+            myo._imu_mode = imu_mode
+        return jsonify({"success": True})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
 @app.route("/save-data", methods=["POST"])
 def save_data():
     content = request.get_json()
-    path = content.get("path")
+    path = content.get("path", "").strip()
     data = content.get("data")
 
-    if not path or not data:
-        return jsonify({"error": "Missing path or data"}), 400
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    # If no path provided, default to "output/"
+    if not path:
+        return jsonify({"error": "Missing file path"}), 400
+
+    # Always save under output folder
+    base_dir = os.path.join(os.getcwd(), "output")
+    os.makedirs(base_dir, exist_ok=True)
+
+    # If path is not absolute, make it under output
+    if not os.path.isabs(path):
+        path = os.path.join(base_dir, path)
 
     dir_path = os.path.dirname(path)
     os.makedirs(dir_path, exist_ok=True)
 
     try:
+        is_raw = all("raw_hex" in row for row in data)
+
         with open(path, "w", newline="") as f:
-            # Write metadata block at the top
-            f.write(f"# Firmware: {myo.firmware_version or 'unknown'}\n")
-            f.write(f"# SKU: {myo.sku or 'unknown'}\n")
-            f.write(f"# Model: {myo.model_name or 'unknown'}\n")
-            f.write(f"# Format: timestamp, emg_0...7, quat_wxyz, acc_xyz, gyro_xyz, label\n")
+            if is_raw:
+                f.write("# Firmware: {}\n".format(myo.firmware_version or 'unknown'))
+                f.write("# SKU: {}\n".format(myo.sku or 'unknown'))
+                f.write("# Model: {}\n".format(myo.model_name or 'unknown'))
+                f.write("# EMG Mode: {}\n".format(
+                    {0: "None", 2: "Filtered", 3: "Raw"}.get(myo._emg_mode, f"Unknown ({myo._emg_mode})")
+                ))
+                f.write("# IMU Mode: {}\n".format(
+                    {0: "None", 1: "Data", 2: "Events", 3: "All", 4: "Raw"}.get(myo._imu_mode, f"Unknown ({myo._imu_mode})")
+                ))
+                f.write("# Format: timestamp,type,raw_hex,label\n")
 
-            writer = csv.writer(f)
+                writer = csv.writer(f)
+                writer.writerow(["timestamp", "type", "raw_hex", "label"])
 
-            # Header row
-            writer.writerow([
-                "timestamp",
-                *[f"emg_{i}" for i in range(8)],
-                "quat_w", "quat_x", "quat_y", "quat_z",
-                "acc_x", "acc_y", "acc_z",
-                "gyro_x", "gyro_y", "gyro_z",
-                "label"
-            ])
+                for row in data:
+                    writer.writerow([
+                        row.get("timestamp", ""),
+                        row.get("type", ""),
+                        row.get("raw_hex", ""),
+                        row.get("label", "unlabeled")
+                    ])
+            else:
+                f.write("# Firmware: {}\n".format(myo.firmware_version or 'unknown'))
+                f.write("# SKU: {}\n".format(myo.sku or 'unknown'))
+                f.write("# Model: {}\n".format(myo.model_name or 'unknown'))
+                f.write("# EMG Mode: {}\n".format(
+                    {0: "None", 2: "Filtered", 3: "Raw"}.get(myo._emg_mode, f"Unknown ({myo._emg_mode})")
+                ))
+                f.write("# IMU Mode: {}\n".format(
+                    {0: "None", 1: "Data", 2: "Events", 3: "All", 4: "Raw"}.get(myo._imu_mode, f"Unknown ({myo._imu_mode})")
+                ))
+                f.write("# Format: timestamp,emg_0...7,quat_wxyz,acc_xyz,gyro_xyz,label\n")
 
-            for row in data:
-                ts = row.get("timestamp", "")
-                label = row.get("label", "unlabeled")
-                emg = row.get("emg", [""] * 8)
-
-                imu = row.get("imu") or {}
-                quat = imu.get("quat", [""] * 4)
-                acc = imu.get("acc", [""] * 3)
-                gyro = imu.get("gyro", [""] * 3)
-
+                writer = csv.writer(f)
                 writer.writerow([
-                    ts, *emg,
-                    *quat, *acc, *gyro,
-                    label
+                    "timestamp",
+                    *[f"emg_{i}" for i in range(8)],
+                    "quat_w", "quat_x", "quat_y", "quat_z",
+                    "acc_x", "acc_y", "acc_z",
+                    "gyro_x", "gyro_y", "gyro_z",
+                    "label"
                 ])
+                for row in data:
+                    ts = row.get("timestamp", "")
+                    label = row.get("label", "unlabeled")
+                    emg = row.get("emg", [""] * 8)
+                    imu = row.get("imu") or {}
+                    quat = imu.get("quat", [""] * 4)
+                    acc = imu.get("acc", [""] * 3)
+                    gyro = imu.get("gyro", [""] * 3)
+
+                    writer.writerow([
+                        ts, *emg,
+                        *quat, *acc, *gyro,
+                        label
+                    ])
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
