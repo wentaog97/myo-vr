@@ -277,18 +277,23 @@ function stopRecording() {
     timerId = null;
   }
 
-  if (recordedData.length > 0 && savePath) {
+  if (recordedData.length > 0) {
     const now = new Date();
     const timestampStr = now.toISOString().replace(/[:.]/g, "-");
-    const fileName = `myo_${isRawMode ? "raw" : "processed"}_${currentLabel}_${timestampStr}.csv`;
-    const finalPath = savePath.replace(/\/$/, "") + `/${fileName}`;
+    const fileName = `myo_${isRawMode ? "hex" : "parsed"}_${currentLabel}_${timestampStr}.csv`;
+
+    // If savePath is empty, just use fileName directly
+    let finalPath = fileName;
+    if (savePath) {
+      finalPath = savePath.replace(/\/$/, "") + `/${fileName}`;
+    }
 
     fetch("/save-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: finalPath, data: recordedData }),
     }).then(() => {
-      showToast("Data saved to " + finalPath);
+      showToast("Data saved to output folder!");
     }).catch((err) => {
       console.error("Save error", err);
       showToast("Failed to save data.");

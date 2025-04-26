@@ -332,17 +332,18 @@ def scan():
 def connect():
     content = request.get_json() or {}
     addr = content.get("address")
-    emg_mode = content.get("emg_mode", 3)  # Default raw
-    imu_mode = content.get("imu_mode", 1)  # Default data
+    emg_mode = content.get("emg_mode", 3)
+    imu_mode = content.get("imu_mode", 1)
 
     if not addr:
         abort(400, "address missing")
 
-    # Build dynamic SET_MODE_CMD
     set_mode_cmd = bytearray([0x01, 3, emg_mode, imu_mode, 0x00])
 
     try:
         myo.connect(addr, set_mode_cmd=set_mode_cmd)
+        myo._emg_mode = emg_mode
+        myo._imu_mode = imu_mode
         return jsonify({"success": True})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -401,11 +402,23 @@ def update_mode():
 @app.route("/save-data", methods=["POST"])
 def save_data():
     content = request.get_json()
-    path = content.get("path")
+    path = content.get("path", "").strip()
     data = content.get("data")
 
-    if not path or not data:
-        return jsonify({"error": "Missing path or data"}), 400
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    # If no path provided, default to "output/"
+    if not path:
+        return jsonify({"error": "Missing file path"}), 400
+
+    # Always save under output folder
+    base_dir = os.path.join(os.getcwd(), "output")
+    os.makedirs(base_dir, exist_ok=True)
+
+    # If path is not absolute, make it under output
+    if not os.path.isabs(path):
+        path = os.path.join(base_dir, path)
 
     dir_path = os.path.dirname(path)
     os.makedirs(dir_path, exist_ok=True)
