@@ -19,7 +19,12 @@ _MYO_INFO_UUID = "d5060101-a904-deb9-4748-2c7f4a124842" # Model name
 _MYO_FIRMWARE_UUID = "d5060201-a904-deb9-4748-2c7f4a124842" # Firmware version
 _MYO_SERVICE_PREFIX = "d506"  # Any service that starts with this is Myo-specific
 
-_EMG_UUID = "d5060105-a904-deb9-4748-2c7f4a124842"
+_EMG_UUIDS = [
+    "d5060105-a904-deb9-4748-2c7f4a124842",
+    "d5060205-a904-deb9-4748-2c7f4a124842",
+    "d5060305-a904-deb9-4748-2c7f4a124842",
+    "d5060405-a904-deb9-4748-2c7f4a124842",
+]
 _IMU_UUID = "d5060402-a904-deb9-4748-2c7f4a124842"
 
 # Enable raw EMG + IMU
@@ -120,22 +125,24 @@ class MyoManager:
         if not self._client or not self._client.is_connected:
             return
 
-        def notification_handler(_, data: bytearray):
-            if len(data) == 16:
-                samples = [
-                    [int.from_bytes([b], byteorder="little", signed=True) for b in data[:8]],
-                    [int.from_bytes([b], byteorder="little", signed=True) for b in data[8:]]
-                ]
-                socketio.emit("emg", {
-                    "samples": samples,
-                    "raw": data.hex()
-                })
+        def make_handler(char_idx: int):
+            def handler(_, data: bytearray):
+                if len(data) == 16:        # 2 × 8-ch samples
+                    samples = [
+                        [int.from_bytes([b], "little", signed=True) for b in data[:8]],
+                        [int.from_bytes([b], "little", signed=True) for b in data[8:]],
+                    ]
+                    socketio.emit("emg", {
+                        "bank": char_idx,        # tell the front-end which bank
+                        "samples": samples,
+                        "raw": data.hex(),
+                    })
+            return handler
 
+        # Subscribe to every EMG characteristic
+        for idx, uuid in enumerate(_EMG_UUIDS):
+            await self._client.start_notify(uuid, make_handler(idx))
 
-        try:
-            await self._client.start_notify(_EMG_UUID, notification_handler)
-        except Exception as e:
-            print(f"EMG stream error: {e}")
 
     async def _start_imu_stream(self):
         if not self._client or not self._client.is_connected:
