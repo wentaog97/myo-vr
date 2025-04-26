@@ -2,36 +2,6 @@
  *  Myo visualizer - frontend 
  */
 
-// Utility to update connection badge
-function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
-    const badge = document.getElementById("status-badge");
-    badge.textContent = text;
-    badge.className = "badge " + colorClass;  
-
-    if (battery == null) {
-        batteryBadge.classList.add("d-none");
-    } else {
-        batteryBadge.textContent = battery + " %";
-        batteryBadge.classList.remove("d-none");
-    }
-
-    const modelBadge = document.getElementById("model-badge");
-    if (model == null) {
-        modelBadge.classList.add("d-none");
-    } else {
-        modelBadge.textContent = model;
-        modelBadge.classList.remove("d-none");
-    }
-
-    const firmwareBadge = document.getElementById("firmware-badge");
-    if (firmware == null) {
-        firmwareBadge.classList.add("d-none");
-    } else {
-        firmwareBadge.textContent = "v" + firmware;
-        firmwareBadge.classList.remove("d-none");
-    }
-}
-
 // Buttons & UI elements
 const scanBtn = document.getElementById("scan-btn");
 const connectBtn = document.getElementById("connect-btn");
@@ -43,6 +13,12 @@ const batteryBadge = document.getElementById("battery-badge");
 const pauseBtn = document.getElementById("pause-btn");
 const emgModeSelect = document.getElementById("emg-mode-select");
 const imuModeSelect = document.getElementById("imu-mode-select");
+const freeRecordBtn = document.getElementById("free-record-btn");
+const timerRecordBtn = document.getElementById("start-timer-btn");
+const recordIndicator = document.getElementById("recording-indicator");
+const optionsBtn = document.getElementById("options-btn");
+const optionsPanel = document.getElementById("options-panel");
+const chartSizeSlider = document.getElementById("chart-size-slider");
 
 let latestIMU = null;
 let selectedAddress = null;
@@ -66,6 +42,36 @@ async function postJSON(url, data = {}) {
         body: JSON.stringify(data),
     });
     return res;
+}
+
+// Utility to update connection badge
+function setStatus(text, colorClass, battery = null, model = null, firmware = null) {
+  const badge = document.getElementById("status-badge");
+  badge.textContent = text;
+  badge.className = "badge " + colorClass;  
+
+  if (battery == null) {
+      batteryBadge.classList.add("d-none");
+  } else {
+      batteryBadge.textContent = battery + " %";
+      batteryBadge.classList.remove("d-none");
+  }
+
+  const modelBadge = document.getElementById("model-badge");
+  if (model == null) {
+      modelBadge.classList.add("d-none");
+  } else {
+      modelBadge.textContent = model;
+      modelBadge.classList.remove("d-none");
+  }
+
+  const firmwareBadge = document.getElementById("firmware-badge");
+  if (firmware == null) {
+      firmwareBadge.classList.add("d-none");
+  } else {
+      firmwareBadge.textContent = "v" + firmware;
+      firmwareBadge.classList.remove("d-none");
+  }
 }
 
 // Poll myo status every 5 s while connected
@@ -93,7 +99,6 @@ function showToast(message) {
   const toast = new bootstrap.Toast(toastEl);
   toast.show();
 }
-
 
 async function updateMode() {
   const emgMode = parseInt(emgModeSelect.value, 16);
@@ -223,10 +228,6 @@ pauseBtn.addEventListener("click", () => {
     pauseBtn.textContent = emgPaused ? "Resume Stream" : "Pause Stream";
 });
 
-const freeRecordBtn = document.getElementById("free-record-btn");
-const timerRecordBtn = document.getElementById("start-timer-btn");
-const recordIndicator = document.getElementById("recording-indicator");
-
 function updateRecordingUI(isRecording, source) {
   const activeBtn = source === "free" ? freeRecordBtn : timerRecordBtn;
   const otherBtn = source === "free" ? timerRecordBtn : freeRecordBtn;
@@ -252,6 +253,28 @@ function updateRecordingUI(isRecording, source) {
     recordIndicator.classList.add("d-none");
   }
 }
+
+optionsBtn.addEventListener("click", (e) => {
+  e.stopPropagation(); // Prevent closing immediately
+  optionsPanel.classList.toggle("d-none");
+});
+
+// Hide the panel when clicking outside
+document.addEventListener("click", (e) => {
+  if (!optionsPanel.contains(e.target) && e.target !== optionsBtn) {
+      optionsPanel.classList.add("d-none");
+  }
+});
+
+chartSizeSlider.addEventListener("input", (e) => {
+  const newHeight = parseInt(e.target.value);
+
+  emgCharts.forEach((chart) => {
+    const container = chart.canvas.parentNode;
+    container.style.height = `${newHeight}px`;
+  });
+});
+
 
 function startRecording(source, duration = null) {
   if (recording) {

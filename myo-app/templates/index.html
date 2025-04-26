@@ -52,8 +52,20 @@
           <option value="0x03">All</option>
           <option value="0x04" selected>Raw</option>
         </select>
+
+        <!-- Options Button -->
+        <div class="ms-auto position-relative">
+          <button class="btn btn-outline-secondary" id="options-btn">Options ⚙️</button>
+          <div id="options-panel" class="card p-3 position-absolute end-0 mt-2 d-none" style="z-index: 2000; min-width: 200px;">
+            <h5 class="h6">Settings</h5>
+            <hr>
+            <div class="mb-3">
+              <label for="chart-size-slider" class="form-label">Chart Size</label>
+              <input type="range" class="form-range" id="chart-size-slider" min="50" max="100" value="100">
+            </div>
+          </div>
+        </div>
       </div>
-      
 
       <ul class="list-group mb-2" id="device-list"></ul>
 
