@@ -56,7 +56,6 @@ class MyoManager:
         self._lock = asyncio.Lock()
         self._connected: bool = False
         self._battery: Optional[int] = None
-        self._keep_alive_task: Optional[asyncio.Task] = None
         self._last_error: Optional[str] = None
         self._sku = None
         self._firmware_version = None
@@ -210,13 +209,8 @@ class MyoManager:
                 await self._read_firmware_info()
 
                 # Start streaming EMG and IMU
-                await self._client.write_gatt_char(_COMMAND_UUID, set_mode_cmd or _SET_MODE_CMD, response=True)
-                await asyncio.sleep(0.1)
                 await self._start_emg_stream()
-                await asyncio.sleep(0.1)
                 await self._start_imu_stream()
-                
-                self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
 
                 print(f"Connected to {address}")
 
@@ -228,15 +222,12 @@ class MyoManager:
     async def _disconnect(self):
         async with self._lock:
             if self._client and self._client.is_connected:
-                if self._keep_alive_task:
-                    self._keep_alive_task.cancel()
                 try:
                     await self._client.disconnect()
                 except Exception:
                     pass
             # Reset state
             self._client = None
-            self._keep_alive_task = None
             self._battery = None
             self._connected = False
             print("Disconnected")
@@ -249,17 +240,6 @@ class MyoManager:
             await self._client.write_gatt_char(_COMMAND_UUID, payload, response=True)
         except Exception as exc:
             self._last_error = f"Vibrate error: {exc}"
-
-    async def _keep_alive_loop(self):
-        try:
-            while self._connected:
-                await self._client.write_gatt_char(_COMMAND_UUID, _NEVER_SLEEP_CMD, response=True)
-                await asyncio.sleep(60)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            self._last_error = f"Keep-alive error: {exc}"
-            await self._disconnect()
 
     async def _read_battery(self):
         # Try standard Battery Service first
