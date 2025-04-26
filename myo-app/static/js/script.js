@@ -198,6 +198,15 @@ disconnectBtn.addEventListener("click", async () => {
     }
 });
 
+// Ensure device disconnects when window is closed
+window.addEventListener("beforeunload", () => {
+  try {
+      navigator.sendBeacon("/disconnect");
+  } catch (e) {
+      console.error("Failed to auto-disconnect", e);
+  }
+});
+
 // Reset / Turn off
 resetBtn.addEventListener("click", async () => {
     await postJSON("/reset");
@@ -359,6 +368,30 @@ const MAX_POINTS = 200; // ~1 s of data at 200 Hz
     });
   }
 })();
+
+// Ensure single instance of the tab
+(function() {
+  const TAB_KEY = 'myo-single-tab-id';
+  const MY_TAB_ID = Date.now().toString() + Math.random().toString();
+
+  // Register self
+  localStorage.setItem(TAB_KEY, MY_TAB_ID);
+
+  window.addEventListener('storage', (e) => {
+      if (e.key === TAB_KEY && e.newValue !== MY_TAB_ID) {
+          alert("Another Myo Control tab is already open. Closing this tab...");
+          window.close();
+      }
+  });
+
+  window.addEventListener('beforeunload', () => {
+      // Only clear if it's still the owner
+      if (localStorage.getItem(TAB_KEY) === MY_TAB_ID) {
+          localStorage.removeItem(TAB_KEY);
+      }
+  });
+})();
+
 
 function pushFrame(frame) {
     if (emgPaused) return;
