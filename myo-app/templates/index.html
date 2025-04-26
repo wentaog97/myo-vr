@@ -29,31 +29,31 @@
         <span class="badge bg-secondary ms-2 d-none" id="firmware-badge">v1.5.x</span>
       </div>
 
-      <div class="d-flex gap-2 mb-4 flex-wrap">
+      <div class="d-flex gap-2 align-items-center flex-wrap mb-4">
         <button class="btn btn-primary" id="scan-btn">Scan</button>
         <button class="btn btn-primary" id="connect-btn" disabled>Connect</button>
         <button class="btn btn-primary" id="disconnect-btn" disabled>Disconnect</button>
         <button class="btn btn-primary" id="reset-btn" disabled>Turn Off</button>
         <button class="btn btn-primary" id="vibrate-btn" disabled>Vibrate</button>
-
         <button class="btn btn-secondary" id="pause-btn">Pause Stream</button>
-        <!-- button class="btn btn-secondary" id="record-btn">Start Recording</button -->
-        <!-- button class="btn btn-outline-secondary" id="settings-toggle">Settings</button -->
+      
+        <label for="emg-mode-select" class="form-label mb-0 ms-3">EMG Mode</label>
+        <select id="emg-mode-select" class="form-select form-select-sm w-auto">
+          <option value="0x00">None</option>
+          <option value="0x02">Filtered</option>
+          <option value="0x03" selected>Raw</option>
+        </select>
+      
+        <label for="imu-mode-select" class="form-label mb-0 ms-2">IMU Mode</label>
+        <select id="imu-mode-select" class="form-select form-select-sm w-auto">
+          <option value="0x00">None</option>
+          <option value="0x01">Data</option>
+          <option value="0x02">Events</option>
+          <option value="0x03">All</option>
+          <option value="0x04" selected>Raw</option>
+        </select>
       </div>
-
-      <!-- div id="settings-panel" class="card mb-4 p-3 d-none" style="max-width: 500px;">
-        <h5>Settings</h5>
-        <div class="mb-3">
-          <label for="save-path" class="form-label">CSV Save Directory</label>
-          <input type="text" class="form-control" id="save-path" placeholder="/Users/wentaogao/Desktop/myo-app/" />
-        </div>
-        <div class="mb-3">
-          <label for="data-label" class="form-label">Pose Label</label>
-          <input type="text" class="form-control" id="data-label" placeholder="e.g. fist, rest, wave" />
-        </div>
-        <button class="btn btn-sm btn-primary" id="save-settings-btn">Save Settings</button>
-        <div class="form-text text-success d-none" id="settings-saved-msg">Settings saved!</div>
-      </div -->
+      
 
       <ul class="list-group mb-2" id="device-list"></ul>
 
@@ -127,6 +127,20 @@
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <!-- Myo FrontEnd functions -->
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+
+    <!-- Toast Container -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100">
+      <div id="liveToast" class="toast align-items-center text-bg-primary border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+          <div class="toast-body" id="toast-body">
+            <!-- Message will be inserted here -->
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      </div>
+    </div>
+
 
   </body>
 </html>

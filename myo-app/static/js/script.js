@@ -41,6 +41,8 @@ const vibrateBtn = document.getElementById("vibrate-btn");
 const deviceList = document.getElementById("device-list");
 const batteryBadge = document.getElementById("battery-badge");
 const pauseBtn = document.getElementById("pause-btn");
+const emgModeSelect = document.getElementById("emg-mode-select");
+const imuModeSelect = document.getElementById("imu-mode-select");
 
 let latestIMU = null;
 let selectedAddress = null;
@@ -84,6 +86,40 @@ async function pollStatus() {
     }
 }
 
+function showToast(message) {
+  const toastBody = document.getElementById("toast-body");
+  toastBody.textContent = message;
+  const toastEl = document.getElementById("liveToast");
+  const toast = new bootstrap.Toast(toastEl);
+  toast.show();
+}
+
+
+async function updateMode() {
+  const emgMode = parseInt(emgModeSelect.value, 16);
+  const imuMode = parseInt(imuModeSelect.value, 16);
+
+  try {
+      const res = await postJSON("/update-mode", {
+          emg_mode: emgMode,
+          imu_mode: imuMode
+      });
+
+      const js = await res.json();
+      if (res.ok && js.success) {
+        showToast(`Updated: EMG Mode set to ${emgMode === 0x03 ? "Raw" : (emgMode === 0x02 ? "Filtered" : "None")}, IMU Mode set to ${["None", "Data", "Events", "All", "Raw"][imuMode]}`);
+      } else {
+        showToast(`Failed to update mode: ${js.error || "Unknown error"}`);
+      }
+  } catch (e) {
+      console.error("Mode update failed", e);
+      showToast("Failed to update mode.");
+  }
+}
+
+emgModeSelect.addEventListener("change", updateMode);
+imuModeSelect.addEventListener("change", updateMode);
+
 // Scan for devices
 scanBtn.addEventListener("click", async () => {
     setStatus("Scanning...", "bg-info");
@@ -122,23 +158,31 @@ scanBtn.addEventListener("click", async () => {
 
 // Connect
 connectBtn.addEventListener("click", async () => {
-    if (!selectedAddress) return;
-    setStatus("Connecting...", "bg-info");
-    try {
-        const res = await postJSON("/connect", { address: selectedAddress });
-        const js = await res.json();
-        if (res.ok && js.success) {
-            setStatus("Connected", "bg-success");   
-            toggleButtons(true);
-            pollStatus();                          
-            pollTimer = setInterval(pollStatus, 5000);
-        } else {
-            setStatus(js.message || "Connect error", "bg-danger");
-        }
-    } catch (e) {
-        setStatus("Connect failed", "bg-danger");
-        console.error(e);
-    }
+  if (!selectedAddress) return;
+  setStatus("Connecting...", "bg-info");
+  try {
+      const emgMode = parseInt(emgModeSelect.value, 16);
+      const imuMode = parseInt(imuModeSelect.value, 16);
+
+      const res = await postJSON("/connect", { 
+          address: selectedAddress,
+          emg_mode: emgMode,
+          imu_mode: imuMode
+      });
+
+      const js = await res.json();
+      if (res.ok && js.success) {
+          setStatus("Connected", "bg-success");   
+          toggleButtons(true);
+          pollStatus();                          
+          pollTimer = setInterval(pollStatus, 5000);
+      } else {
+          setStatus(js.message || "Connect error", "bg-danger");
+      }
+  } catch (e) {
+      setStatus("Connect failed", "bg-danger");
+      console.error(e);
+  }
 });
 
 // Disconnect
@@ -244,10 +288,10 @@ function stopRecording() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: finalPath, data: recordedData }),
     }).then(() => {
-      alert("Data saved to " + finalPath);
+      showToast("Data saved to " + finalPath);
     }).catch((err) => {
       console.error("Save error", err);
-      alert("Failed to save data.");
+      showToast("Failed to save data.");
     });
   }
 }
@@ -264,7 +308,6 @@ timerRecordBtn.addEventListener("click", () => {
     alert("Enter a valid duration in seconds.");
   }
 });
-
 
 function toggleButtons(connected) {
     disconnectBtn.disabled = !connected;
@@ -327,25 +370,43 @@ function pushFrame(frame) {
 const socket = io();
 
 socket.on("emg", (msg) => {
-    if (recording) {
-        msg.samples.forEach(sample => {
-            recordedData.push({
-                timestamp: Date.now(),
-                emg: sample,
-                imu: latestIMU,
-                label: currentLabel,
-            });
-        });
-    }    
-    msg.samples.forEach(pushFrame);
+  if (recording) {
+      if (isRawMode && msg.raw) {
+          recordedData.push({
+              timestamp: Date.now(),
+              type: "EMG",
+              raw_hex: msg.raw,
+              label: currentLabel,
+          });
+      } else {
+          msg.samples.forEach(sample => {
+              recordedData.push({
+                  timestamp: Date.now(),
+                  emg: sample,
+                  imu: latestIMU,
+                  label: currentLabel,
+              });
+          });
+      }
+  }
+  msg.samples.forEach(pushFrame);
 });
 
 socket.on("imu", (msg) => {
-    latestIMU = msg;
-    if (msg.quat) {
-        applyQuaternionToCube(msg.quat);
-    }
+  latestIMU = msg;
+  if (recording && isRawMode && msg.raw) {
+      recordedData.push({
+          timestamp: Date.now(),
+          type: "IMU",
+          raw_hex: msg.raw,
+          label: currentLabel,
+      });
+  }
+  if (msg.quat) {
+      applyQuaternionToCube(msg.quat);
+  }
 });
+
 
 function applyQuaternionToCube([w, x, y, z]) {
     const quat = new THREE.Quaternion(x, y, z, w);
